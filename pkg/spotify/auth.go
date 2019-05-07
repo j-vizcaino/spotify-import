@@ -2,6 +2,7 @@ package spotify
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"github.com/zmb3/spotify"
 	"golang.org/x/oauth2"
@@ -10,11 +11,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"os/user"
+	"path"
 	"time"
 )
 
 var (
 	RedirectUrl *url.URL
+	tokenFile   string
 )
 
 func init() {
@@ -23,9 +28,53 @@ func init() {
 	if err != nil {
 		panic(err)
 	}
+	me, err := user.Current()
+	if err != nil {
+		panic(err)
+	}
+	tokenFile = path.Join(me.HomeDir, ".spotify.oauth-token")
+}
+
+func getAuthTokenFromFile() (*oauth2.Token, error) {
+	f, err := os.Open(tokenFile)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	decoder := json.NewDecoder(f)
+	token := &oauth2.Token{}
+	if err := decoder.Decode(token); err != nil {
+		return nil, err
+	}
+	return token, nil
+}
+
+func saveAuthTokenToFile(token *oauth2.Token) {
+	f, err := os.OpenFile(tokenFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	encoder := json.NewEncoder(f)
+	_ = encoder.Encode(token)
 }
 
 func getAuthToken(auth spotify.Authenticator) (*oauth2.Token, error) {
+	tok, err := getAuthTokenFromFile()
+	if err == nil {
+		return tok, err
+	}
+
+	tok, err = newAuthToken(auth)
+	if err != nil {
+		return nil, err
+	}
+	saveAuthTokenToFile(tok)
+	return tok, nil
+}
+
+func newAuthToken(auth spotify.Authenticator) (*oauth2.Token, error) {
 	tokenCh := make(chan *oauth2.Token)
 	defer close(tokenCh)
 	errCh := make(chan error)
